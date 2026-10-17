@@ -1,0 +1,784 @@
+// BaselineX ERD
+// Target: PostgreSQL / EF Core
+// Compatible with dbdiagram.io DBML
+//
+// Notes:
+// - auth.users represents Supabase Auth and is external to the BaselineX application schema.
+// - Image/file bytes live in Cloudflare R2; PostgreSQL stores only object keys and metadata.
+// - Product = canonical catalog item.
+// - Listing = a specific item offered for sale by a seller/organization.
+// - Reviews use a polymorphic subject_type + subject_id relationship.
+
+Project BaselineX {
+  database_type: 'PostgreSQL'
+  Note: 'BaselineX racquet sports marketplace and Play platform'
+}
+ 
+Enum listing_condition {
+  new
+  like_new
+  excellent
+  good
+  fair
+}
+
+Enum listing_status {
+  draft
+  active
+  reserved
+  sold
+  removed
+  deleted
+}
+
+Enum organization_type {
+  tennis_club
+  pickleball_club
+  pro_shop
+  academy
+}
+
+Enum organization_role {
+  owner
+  administrator
+  coach
+  staff
+}
+
+Enum offer_status {
+  pending
+  accepted
+  declined
+  countered
+  expired
+  withdrawn
+}
+
+Enum order_status {
+  pending_payment
+  paid
+  awaiting_shipment
+  shipped
+  delivered
+  completed
+  cancelled
+  refunded
+}
+
+Enum payment_status {
+  pending
+  requires_action
+  succeeded
+  failed
+  cancelled
+  partially_refunded
+  refunded
+}
+
+Enum shipment_status {
+  pending
+  label_created
+  shipped
+  in_transit
+  delivered
+  returned
+  cancelled
+}
+
+Enum activity_type {
+  private_lesson
+  semi_private_lesson
+  group_clinic
+  live_ball
+  cardio_tennis
+  beginner_class
+  intermediate_clinic
+  advanced_clinic
+  junior_clinic
+  pickleball_lesson
+  pickleball_open_play
+  padel_lesson
+  squash_lesson
+  hitting_session
+  camp
+  social_event
+}
+
+Enum session_status {
+  scheduled
+  cancelled
+  completed
+}
+
+Enum booking_status {
+  pending_payment
+  confirmed
+  cancelled
+  refunded
+  completed
+  no_show
+}
+
+Enum review_subject_type {
+  seller
+  coach
+  organization
+  activity
+}
+
+Enum seller_inventory_type {
+  self_service
+  managed_resale
+  baselinex_owned
+}
+
+Enum price_unit {
+  per_person
+  per_session
+  per_hour
+  flat
+}
+
+Enum stripe_event_status {
+  received
+  processed
+  ignored
+  failed
+}
+
+// -----------------------------------------------------------------------------
+// EXTERNAL AUTHENTICATION
+// -----------------------------------------------------------------------------
+
+Table auth.users {
+  id uuid [pk, note: 'Supabase Auth user id']
+  email varchar(320) [unique]
+  created_at timestamptz
+
+  Note: 'External Supabase Auth table. Managed by Supabase, not EF Core migrations.'
+}
+
+// -----------------------------------------------------------------------------
+// IDENTITY
+// -----------------------------------------------------------------------------
+
+Table user_profiles {
+  id uuid [pk]
+  auth_user_id uuid [not null, unique]
+  display_name varchar(120) [not null]
+  first_name varchar(100)
+  last_name varchar(100)
+  avatar_object_key varchar(500)
+  bio text
+  city varchar(120)
+  state varchar(80)
+  neighborhood varchar(120)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    auth_user_id [unique]
+    (city, state)
+  }
+
+  Note: 'BaselineX application profile. Passwords are never stored here.'
+}
+
+// -----------------------------------------------------------------------------
+// CATALOG
+// -----------------------------------------------------------------------------
+
+Table sports {
+  id int [pk, increment]
+  name varchar(80) [not null]
+  slug varchar(80) [not null, unique]
+  is_active boolean [not null, default: true]
+
+  indexes {
+    slug [unique]
+  }
+}
+
+Table categories {
+  id int [pk, increment]
+  name varchar(100) [not null]
+  slug varchar(100) [not null, unique]
+  is_active boolean [not null, default: true]
+
+  indexes {
+    slug [unique]
+  }
+}
+
+Table brands {
+  id int [pk, increment]
+  name varchar(120) [not null]
+  slug varchar(120) [not null, unique]
+  logo_object_key varchar(500)
+  is_active boolean [not null, default: true]
+
+  indexes {
+    slug [unique]
+  }
+}
+
+Table products {
+  id uuid [pk]
+  sport_id int [not null]
+  category_id int [not null]
+  brand_id int [not null]
+  name varchar(180) [not null]
+  model varchar(180)
+  model_year int
+  retail_price decimal(12,2)
+  currency char(3) [not null, default: 'USD']
+  description text
+  primary_image_object_key varchar(500)
+  specifications jsonb
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    sport_id
+    category_id
+    brand_id
+    (brand_id, name)
+    (sport_id, category_id, brand_id)
+  }
+
+  Note: 'Canonical catalog product. A product can have many seller listings.'
+}
+
+// -----------------------------------------------------------------------------
+// ORGANIZATIONS / SELLERS
+// -----------------------------------------------------------------------------
+
+Table organizations {
+  id uuid [pk]
+  name varchar(180) [not null]
+  slug varchar(180) [not null, unique]
+  type organization_type [not null]
+  description text
+  logo_object_key varchar(500)
+  cover_object_key varchar(500)
+  city varchar(120)
+  state varchar(80)
+  neighborhood varchar(120)
+  website varchar(500)
+  phone varchar(40)
+  is_verified boolean [not null, default: false]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    slug [unique]
+    type
+    (city, state)
+    is_verified
+  }
+}
+
+Table organization_members {
+  id uuid [pk]
+  organization_id uuid [not null]
+  user_id uuid [not null]
+  role organization_role [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (organization_id, user_id) [unique]
+    user_id
+    role
+  }
+}
+
+Table coach_profiles {
+  id uuid [pk]
+  user_id uuid [not null, unique]
+  bio text
+  years_experience int
+  private_lesson_rate decimal(12,2)
+  currency char(3) [not null, default: 'USD']
+  is_verified boolean [not null, default: false]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    user_id [unique]
+    is_verified
+  }
+}
+
+Table coach_sports {
+  coach_profile_id uuid [not null]
+  sport_id int [not null]
+
+  indexes {
+    (coach_profile_id, sport_id) [pk]
+  }
+}
+
+// -----------------------------------------------------------------------------
+// MARKETPLACE
+// -----------------------------------------------------------------------------
+
+Table listings {
+  id uuid [pk]
+  seller_user_id uuid [not null]
+  organization_id uuid
+  product_id uuid
+  sport_id int [not null]
+  category_id int [not null]
+  brand_id int [not null]
+
+  title varchar(180) [not null]
+  description text [not null]
+  price decimal(12,2) [not null]
+  currency char(3) [not null, default: 'USD']
+
+  condition listing_condition [not null]
+  status listing_status [not null, default: 'draft']
+
+  shipping_available boolean [not null, default: false]
+  local_pickup_available boolean [not null, default: false]
+  pickup_city varchar(120)
+  pickup_neighborhood varchar(120)
+
+  is_demo boolean [not null, default: false]
+  accepts_offers boolean [not null, default: true]
+  inventory_type seller_inventory_type [not null, default: 'self_service']
+
+  item_specifications jsonb
+  concurrency_version bigint [not null, default: 0]
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  published_at timestamptz
+  sold_at timestamptz
+
+  indexes {
+    seller_user_id
+    organization_id
+    product_id
+    sport_id
+    category_id
+    brand_id
+    status
+    condition
+    price
+    created_at
+    (sport_id, category_id, status)
+    (brand_id, status)
+    (status, created_at)
+    (seller_user_id, status)
+    (organization_id, status)
+    (local_pickup_available, pickup_city)
+  }
+
+  Note: 'Specific item being sold. ProductId may be null for custom/manual listings.'
+}
+
+Table listing_images {
+  id uuid [pk]
+  listing_id uuid [not null]
+  object_key varchar(500) [not null]
+  content_type varchar(120) [not null]
+  size_bytes bigint
+  width int
+  height int
+  sort_order int [not null, default: 0]
+  is_primary boolean [not null, default: false]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    listing_id
+    (listing_id, sort_order)
+    object_key [unique]
+  }
+
+  Note: 'Actual image bytes live in Cloudflare R2.'
+}
+
+Table favorites {
+  user_id uuid [not null]
+  listing_id uuid [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (user_id, listing_id) [pk]
+    listing_id
+  }
+}
+
+Table offers {
+  id uuid [pk]
+  listing_id uuid [not null]
+  buyer_id uuid [not null]
+  seller_id uuid [not null]
+  amount decimal(12,2) [not null]
+  currency char(3) [not null, default: 'USD']
+  status offer_status [not null, default: 'pending']
+  parent_offer_id uuid
+  expires_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    listing_id
+    buyer_id
+    seller_id
+    status
+    expires_at
+    (listing_id, status)
+  }
+}
+
+// -----------------------------------------------------------------------------
+// COMMERCE
+// -----------------------------------------------------------------------------
+
+Table orders {
+  id uuid [pk]
+  order_number varchar(60) [not null, unique]
+  buyer_id uuid [not null]
+  seller_id uuid [not null]
+  organization_id uuid
+
+  status order_status [not null, default: 'pending_payment']
+
+  subtotal decimal(12,2) [not null]
+  shipping_amount decimal(12,2) [not null, default: 0]
+  platform_fee decimal(12,2) [not null, default: 0]
+  tax_amount decimal(12,2) [not null, default: 0]
+  total decimal(12,2) [not null]
+  currency char(3) [not null, default: 'USD']
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  paid_at timestamptz
+  completed_at timestamptz
+  cancelled_at timestamptz
+
+  indexes {
+    order_number [unique]
+    buyer_id
+    seller_id
+    organization_id
+    status
+    created_at
+    (buyer_id, created_at)
+    (seller_id, created_at)
+  }
+}
+
+Table order_items {
+  id uuid [pk]
+  order_id uuid [not null]
+  listing_id uuid [not null]
+  title_snapshot varchar(250) [not null]
+  price_snapshot decimal(12,2) [not null]
+  quantity int [not null, default: 1]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    order_id
+    listing_id
+  }
+
+  Note: 'Stores immutable snapshots so historical orders do not change with listing edits.'
+}
+
+Table payments {
+  id uuid [pk]
+  order_id uuid [not null]
+  provider varchar(50) [not null, default: 'stripe']
+  provider_payment_intent_id varchar(255)
+  provider_charge_id varchar(255)
+  amount decimal(12,2) [not null]
+  currency char(3) [not null, default: 'USD']
+  status payment_status [not null, default: 'pending']
+
+  stripe_connected_account_id varchar(255)
+  transfer_id varchar(255)
+  payout_id varchar(255)
+  refund_id varchar(255)
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    order_id
+    provider_payment_intent_id [unique]
+    provider_charge_id
+    status
+  }
+}
+
+Table shipments {
+  id uuid [pk]
+  order_id uuid [not null]
+  carrier varchar(80)
+  service_level varchar(120)
+  tracking_number varchar(180)
+  label_url varchar(1000)
+  status shipment_status [not null, default: 'pending']
+
+  recipient_name varchar(180)
+  address_line1 varchar(180)
+  address_line2 varchar(180)
+  city varchar(120)
+  state varchar(80)
+  postal_code varchar(30)
+  country_code char(2)
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  shipped_at timestamptz
+  delivered_at timestamptz
+
+  indexes {
+    order_id
+    tracking_number
+    status
+  }
+}
+
+Table stripe_webhook_events {
+  id uuid [pk]
+  stripe_event_id varchar(255) [not null, unique]
+  event_type varchar(180) [not null]
+  status stripe_event_status [not null, default: 'received']
+  payload_hash varchar(128)
+  received_at timestamptz [not null, default: `now()`]
+  processed_at timestamptz
+  error_message text
+
+  indexes {
+    stripe_event_id [unique]
+    status
+    received_at
+  }
+
+  Note: 'Used for Stripe webhook idempotency and processing audit.'
+}
+
+// -----------------------------------------------------------------------------
+// PLAY / LESSONS / CLINICS
+// -----------------------------------------------------------------------------
+
+Table activities {
+  id uuid [pk]
+  host_user_id uuid
+  organization_id uuid
+  sport_id int [not null]
+  type activity_type [not null]
+
+  title varchar(220) [not null]
+  description text [not null]
+  skill_level varchar(100)
+  age_group varchar(100)
+
+  price decimal(12,2) [not null]
+  currency char(3) [not null, default: 'USD']
+  price_unit price_unit [not null, default: 'per_person']
+
+  default_capacity int
+  equipment_requirements text
+  cancellation_policy text
+
+  is_active boolean [not null, default: true]
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    host_user_id
+    organization_id
+    sport_id
+    type
+    is_active
+    (sport_id, type, is_active)
+  }
+
+  Note: 'Reusable activity/lesson/clinic definition. Scheduled dates live in activity_sessions.'
+}
+
+Table activity_sessions {
+  id uuid [pk]
+  activity_id uuid [not null]
+  start_time_utc timestamptz [not null]
+  end_time_utc timestamptz [not null]
+  capacity int [not null]
+  venue_name varchar(180)
+  area varchar(160)
+  address_private text
+  status session_status [not null, default: 'scheduled']
+  concurrency_version bigint [not null, default: 0]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    activity_id
+    start_time_utc
+    status
+    (activity_id, start_time_utc)
+    (status, start_time_utc)
+  }
+}
+
+Table bookings {
+  id uuid [pk]
+  activity_session_id uuid [not null]
+  user_id uuid [not null]
+  participant_count int [not null, default: 1]
+  subtotal decimal(12,2) [not null]
+  platform_fee decimal(12,2) [not null, default: 0]
+  tax_amount decimal(12,2) [not null, default: 0]
+  total decimal(12,2) [not null]
+  currency char(3) [not null, default: 'USD']
+  status booking_status [not null, default: 'pending_payment']
+  provider_payment_intent_id varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  cancelled_at timestamptz
+
+  indexes {
+    activity_session_id
+    user_id
+    status
+    provider_payment_intent_id
+    (activity_session_id, status)
+    (user_id, created_at)
+  }
+}
+
+// -----------------------------------------------------------------------------
+// MESSAGING
+// -----------------------------------------------------------------------------
+
+Table conversations {
+  id uuid [pk]
+  listing_id uuid
+  activity_id uuid
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    listing_id
+    activity_id
+    updated_at
+  }
+}
+
+Table conversation_participants {
+  conversation_id uuid [not null]
+  user_id uuid [not null]
+  joined_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (conversation_id, user_id) [pk]
+    user_id
+  }
+}
+
+Table messages {
+  id uuid [pk]
+  conversation_id uuid [not null]
+  sender_id uuid [not null]
+  body text [not null]
+  created_at timestamptz [not null, default: `now()`]
+  read_at timestamptz
+
+  indexes {
+    conversation_id
+    sender_id
+    created_at
+    (conversation_id, created_at)
+  }
+}
+
+// -----------------------------------------------------------------------------
+// REVIEWS
+// -----------------------------------------------------------------------------
+
+Table reviews {
+  id uuid [pk]
+  reviewer_id uuid [not null]
+  subject_type review_subject_type [not null]
+  subject_id uuid [not null]
+  rating int [not null, note: 'Application/DB constraint should enforce 1..5']
+  comment text
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    reviewer_id
+    (subject_type, subject_id)
+    created_at
+  }
+
+  Note: 'Polymorphic target. subject_id may reference a seller user, coach profile, organization, or activity depending on subject_type.'
+}
+
+// -----------------------------------------------------------------------------
+// RELATIONSHIPS
+// -----------------------------------------------------------------------------
+
+Ref: user_profiles.auth_user_id - auth.users.id
+
+Ref: products.sport_id > sports.id
+Ref: products.category_id > categories.id
+Ref: products.brand_id > brands.id
+
+Ref: organization_members.organization_id > organizations.id
+Ref: organization_members.user_id > user_profiles.id
+
+Ref: coach_profiles.user_id - user_profiles.id
+Ref: coach_sports.coach_profile_id > coach_profiles.id
+Ref: coach_sports.sport_id > sports.id
+
+Ref: listings.seller_user_id > user_profiles.id
+Ref: listings.organization_id > organizations.id
+Ref: listings.product_id > products.id
+Ref: listings.sport_id > sports.id
+Ref: listings.category_id > categories.id
+Ref: listings.brand_id > brands.id
+
+Ref: listing_images.listing_id > listings.id
+
+Ref: favorites.user_id > user_profiles.id
+Ref: favorites.listing_id > listings.id
+
+Ref: offers.listing_id > listings.id
+Ref: offers.buyer_id > user_profiles.id
+Ref: offers.seller_id > user_profiles.id
+Ref: offers.parent_offer_id > offers.id
+
+Ref: orders.buyer_id > user_profiles.id
+Ref: orders.seller_id > user_profiles.id
+Ref: orders.organization_id > organizations.id
+
+Ref: order_items.order_id > orders.id
+Ref: order_items.listing_id > listings.id
+
+Ref: payments.order_id > orders.id
+Ref: shipments.order_id > orders.id
+
+Ref: activities.host_user_id > user_profiles.id
+Ref: activities.organization_id > organizations.id
+Ref: activities.sport_id > sports.id
+
+Ref: activity_sessions.activity_id > activities.id
+
+Ref: bookings.activity_session_id > activity_sessions.id
+Ref: bookings.user_id > user_profiles.id
+
+Ref: conversations.listing_id > listings.id
+Ref: conversations.activity_id > activities.id
+
+Ref: conversation_participants.conversation_id > conversations.id
+Ref: conversation_participants.user_id > user_profiles.id
+
+Ref: messages.conversation_id > conversations.id
+Ref: messages.sender_id > user_profiles.id
+
+Ref: reviews.reviewer_id > user_profiles.id
