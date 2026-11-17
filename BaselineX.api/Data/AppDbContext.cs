@@ -106,9 +106,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             foreach (var p in entity.GetProperties().ToList())
             {
-                // Enums are varchar(30), not native Postgres enums.
-                if (p.ClrType.IsEnum)
+                // Enums (nullable ones too) are varchar(30), not native Postgres enums.
+                if ((Nullable.GetUnderlyingType(p.ClrType) ?? p.ClrType).IsEnum)
                     b.Entity(entity.ClrType).Property(p.Name).HasConversion<string>().HasMaxLength(30);
+
+                // Lists of enums are Postgres arrays of the names: varchar(30)[].
+                if (p.IsPrimitiveCollection && p.GetElementType()?.ClrType.IsEnum == true)
+                    b.Entity(entity.ClrType).PrimitiveCollection(p.Name)
+                        .ElementType(e => e.HasConversion<string>().HasMaxLength(30));
 
                 if (p.Name == "Currency")
                     b.Entity(entity.ClrType).Property(p.Name).HasColumnType("char(3)");

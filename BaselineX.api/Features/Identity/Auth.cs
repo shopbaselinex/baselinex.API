@@ -81,6 +81,8 @@ public static class AuthSetup
         await next();
     });
 
+    // Only the display name is set here. The other signup fields (also in user_metadata) are sent by the
+    // frontend's /onboard page via PUT /me, so they get the same validation as every other profile edit.
     private static string DisplayNameFrom(ClaimsPrincipal user)
     {
         string? name = null;

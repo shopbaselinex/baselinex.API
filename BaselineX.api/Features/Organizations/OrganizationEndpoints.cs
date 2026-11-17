@@ -15,7 +15,7 @@ public record OrganizationMemberDto(Guid UserId, string DisplayName, string? Ava
 public record SaveOrganizationRequest(
     [Required, MaxLength(180)] string Name,
     [MaxLength(180)] string? Slug,
-    OrganizationType Type,
+    [EnumDataType(typeof(OrganizationType))] OrganizationType Type,
     string? Description,
     [MaxLength(500)] string? LogoObjectKey,
     [MaxLength(500)] string? CoverObjectKey,
@@ -34,7 +34,7 @@ public record SaveCoachProfileRequest(
     string? Bio,
     [Range(0, 80)] int? YearsExperience,
     [Range(0, 100000)] decimal? PrivateLessonRate,
-    int[] SportIds);
+    [Required, MinLength(1, ErrorMessage = "Pick at least one sport.")] int[] SportIds);
 
 public static class OrgAccess
 {
@@ -42,6 +42,10 @@ public static class OrgAccess
 
     public static Task<bool> HasRoleAsync(this AppDbContext db, Guid organizationId, Guid userId, params OrganizationRole[] roles) =>
         db.OrganizationMembers.AnyAsync(m => m.OrganizationId == organizationId && m.UserId == userId && roles.Contains(m.Role));
+
+    /// <summary>True if the user owns or administers at least one organization.</summary>
+    public static Task<bool> ManagesAnyOrganizationAsync(this AppDbContext db, Guid userId) =>
+        db.OrganizationMembers.AnyAsync(m => m.UserId == userId && Managers.Contains(m.Role));
 }
 
 public static class OrganizationEndpoints
@@ -68,10 +72,7 @@ public static class OrganizationEndpoints
 
         g.MapPost("/", async (SaveOrganizationRequest req, ClaimsPrincipal user, AppDbContext db) =>
         {
-            var org = new Organization { Slug = HttpExtensions.Slugify(req.Slug ?? req.Name) };
-            Apply(org, req);
-            org.Members.Add(new OrganizationMember { UserId = user.UserId(), Role = OrganizationRole.Owner });
-            db.Organizations.Add(org);
+            var org = await AddOrganizationAsync(db, user.UserId(), req);
             await db.SaveChangesAsync();
             return TypedResults.Created($"/organizations/{org.Id}", ToDto(org));
         }).RequireAuthorization();
@@ -153,21 +154,51 @@ public static class OrganizationEndpoints
 
         g.MapPut("/me/coach-profile", async (SaveCoachProfileRequest req, ClaimsPrincipal user, AppDbContext db) =>
         {
-            var me = user.UserId();
-            var sportIds = req.SportIds.Distinct().ToArray();
-            if (await db.Sports.CountAsync(s => sportIds.Contains(s.Id)) != sportIds.Length)
-                return Results.BadRequest("Unknown sport id.");
-
-            var coach = await db.CoachProfiles.Include(c => c.Sports).FirstOrDefaultAsync(c => c.UserId == me);
-            if (coach is null) db.CoachProfiles.Add(coach = new CoachProfile { UserId = me });
-            (coach.Bio, coach.YearsExperience, coach.PrivateLessonRate) = (req.Bio, req.YearsExperience, req.PrivateLessonRate);
-            coach.Sports.RemoveAll(s => !sportIds.Contains(s.SportId));
-            coach.Sports.AddRange(sportIds.Where(id => coach.Sports.All(s => s.SportId != id))
-                .Select(id => new CoachSport { SportId = id }));
-
+            var coach = await UpsertCoachProfileAsync(db, user.UserId(), req);
             await db.SaveChangesAsync();
             return Results.Ok(new { coach.Id });
         }).RequireAuthorization();
+    }
+
+    // Shared with onboarding (POST /me/onboarding). Both only stage changes; the caller saves.
+
+    /// <summary>Creates or updates the user's coach profile.</summary>
+    internal static async Task<CoachProfile> UpsertCoachProfileAsync(AppDbContext db, Guid userId, SaveCoachProfileRequest req)
+    {
+        var sportIds = req.SportIds.Distinct().ToArray();
+        if (await db.Sports.CountAsync(s => sportIds.Contains(s.Id)) != sportIds.Length)
+            throw new DomainException("Unknown sport id.");
+
+        var coach = await db.CoachProfiles.Include(c => c.Sports).FirstOrDefaultAsync(c => c.UserId == userId);
+        if (coach is null) db.CoachProfiles.Add(coach = new CoachProfile { UserId = userId });
+        (coach.Bio, coach.YearsExperience, coach.PrivateLessonRate) = (req.Bio, req.YearsExperience, req.PrivateLessonRate);
+        coach.Sports.RemoveAll(s => !sportIds.Contains(s.SportId));
+        coach.Sports.AddRange(sportIds.Where(id => coach.Sports.All(s => s.SportId != id))
+            .Select(id => new CoachSport { SportId = id }));
+        return coach;
+    }
+
+    /// <summary>Creates an organization owned by the user.</summary>
+    internal static async Task<Organization> AddOrganizationAsync(AppDbContext db, Guid ownerId, SaveOrganizationRequest req)
+    {
+        var org = new Organization { Slug = await UniqueSlugAsync(db, req.Slug ?? req.Name) };
+        Apply(org, req);
+        org.Members.Add(new OrganizationMember { UserId = ownerId, Role = OrganizationRole.Owner });
+        db.Organizations.Add(org);
+        return org;
+    }
+
+    // "Baseline Tennis Club" → baseline-tennis-club, or baseline-tennis-club-2 if that one is taken.
+    private static async Task<string> UniqueSlugAsync(AppDbContext db, string value)
+    {
+        var slug = HttpExtensions.Slugify(value);
+        slug = slug[..Math.Min(slug.Length, 170)].Trim('-'); // room for a suffix within 180
+        if (slug == "") slug = "organization";
+        var taken = await db.Organizations.Where(o => o.Slug == slug || o.Slug.StartsWith(slug + "-"))
+            .Select(o => o.Slug).ToListAsync();
+        var candidate = slug;
+        for (var i = 2; taken.Contains(candidate); i++) candidate = $"{slug}-{i}";
+        return candidate;
     }
 
     private static void Apply(Organization o, SaveOrganizationRequest r) =>

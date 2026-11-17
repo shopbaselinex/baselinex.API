@@ -32,7 +32,7 @@ public static class Seed
             Specifications = """{"weight_grams": 305, "head_size_sq_in": 98}""",
         };
 
-        var seller = new UserProfile { Id = DevUserId, DisplayName = "Dev Seller", City = "Austin", State = "TX" };
+        var seller = new UserProfile { Id = DevUserId, DisplayName = "Dev Seller", State = "TX", Country = "US" };
 
         var listing = new Listing
         {

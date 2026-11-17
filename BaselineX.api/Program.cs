@@ -55,6 +55,7 @@ app.UseAuthorization();
 app.UseProfileUpsert();
 
 app.MapProfileEndpoints();
+app.MapOnboardingEndpoints();
 app.MapCatalogEndpoints();
 app.MapOrganizationEndpoints();
 app.MapListingEndpoints();

@@ -635,14 +635,9 @@ namespace BaselineX.api.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("avatar_object_key");
 
-                    b.Property<string>("Bio")
-                        .HasColumnType("text")
-                        .HasColumnName("bio");
-
-                    b.Property<string>("City")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
-                        .HasColumnName("city");
+                    b.Property<string>("Country")
+                        .HasColumnType("char(2)")
+                        .HasColumnName("country");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -659,15 +654,20 @@ namespace BaselineX.api.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("first_name");
 
+                    b.Property<string>("Gender")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("gender");
+
                     b.Property<string>("LastName")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("last_name");
 
-                    b.Property<string>("Neighborhood")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
-                        .HasColumnName("neighborhood");
+                    b.PrimitiveCollection<string[]>("Roles")
+                        .IsRequired()
+                        .HasColumnType("character varying(30)[]")
+                        .HasColumnName("roles");
 
                     b.Property<string>("State")
                         .HasMaxLength(80)
@@ -695,9 +695,6 @@ namespace BaselineX.api.Migrations
                     b.HasIndex("StripeAccountId")
                         .IsUnique()
                         .HasDatabaseName("ix_user_profiles_stripe_account_id");
-
-                    b.HasIndex("City", "State")
-                        .HasDatabaseName("ix_user_profiles_city_state");
 
                     b.ToTable("user_profiles", (string)null);
                 });

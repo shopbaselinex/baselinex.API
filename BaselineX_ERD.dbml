@@ -162,6 +162,19 @@ Enum stripe_onboarding_status {
   complete
   restricted
 }
+
+Enum gender {
+  female
+  male
+  non_binary
+  prefer_not_to_say
+}
+
+Enum profile_role {
+  shop_and_play
+  coach
+  business
+}
 // -----------------------------------------------------------------------------
 // IDENTITY
 // -----------------------------------------------------------------------------
@@ -172,17 +185,16 @@ Table user_profiles {
   first_name varchar(100)
   last_name varchar(100)
   avatar_object_key varchar(500)
-  bio text
-  city varchar(120)
-  state varchar(80)
-  neighborhood varchar(120)
+  state varchar(80) [note: '2-letter US state code (CA). Wider for other countries later.']
+  country char(2) [note: 'ISO 3166-1 alpha-2. Only US for now.']
+  gender gender [note: 'Private: only returned by /me']
+  roles "profile_role[]" [not null, default: '{}', note: 'Onboarding answer to "How will you use BaselineX?". Personalizes only; grants nothing (see coach_profiles, organization_members).']
   stripe_account_id varchar(255) [note: 'Stripe Connect account for payouts']
   stripe_onboarding_status stripe_onboarding_status [not null, default: 'not_started']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
   indexes {
-    (city, state)
     stripe_account_id [unique]
   }
 
